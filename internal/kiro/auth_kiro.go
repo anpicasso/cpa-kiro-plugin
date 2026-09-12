@@ -310,10 +310,12 @@ type oauthFlowConfig struct {
 
 // parseOAuthFlowConfig resolves the login settings for one login attempt.
 // Plugin config (plugins.configs.kiro.*) supplies the defaults; per-login OAuth
-// flow metadata overrides them when the host sends any. As of CLIProxyAPI
-// v7.2.146 the host never populates AuthLoginStartRequest.Metadata, so config is
-// in practice the only source — the metadata path is here so org IdC keeps
-// working unchanged once the host does send it.
+// flow metadata overrides them. CLIProxyAPI forwards the auth-url query string
+// as that metadata (dev commit 3c3938f, "feat(plugins): forward query parameters
+// as metadata in auth provider start login"), so
+// /v0/management/kiro-auth-url?idc_start_url=...&idc_region=... adds one account
+// without touching config. Hosts older than that send nothing and fall back to
+// the config defaults.
 // ponytail: only snake_case keys are read, top level and under
 // "oauth_flow_config"; add camelCase aliases when a host actually sends them.
 func parseOAuthFlowConfig(metadata map[string]any) oauthFlowConfig {
