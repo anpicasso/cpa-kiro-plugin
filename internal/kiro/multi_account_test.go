@@ -16,6 +16,17 @@ import (
 // flowMetadata is the per-login OAuth flow metadata (nil = config-only login).
 func loginOnce(t *testing.T, flowMetadata map[string]any, accessToken string) pluginapi.AuthData {
 	t.Helper()
+	auth, _ := loginOnceCapturingStartURL(t, flowMetadata, accessToken)
+	return auth
+}
+
+// loginOnceCapturingStartURL also reports the startUrl actually sent upstream in
+// the device-authorization request. startUrl is never stored in the credential
+// (it only picks which portal the user authorizes against), so asserting it at
+// login time is the only way to prove a per-account override took effect.
+func loginOnceCapturingStartURL(t *testing.T, flowMetadata map[string]any, accessToken string) (pluginapi.AuthData, string) {
+	t.Helper()
+	var deviceAuthBody string
 
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
@@ -24,6 +35,7 @@ func loginOnce(t *testing.T, flowMetadata map[string]any, accessToken string) pl
 		case strings.HasSuffix(req.URL, "/client/register"):
 			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"clientId":"cid","clientSecret":"secret"}`)}, nil
 		case strings.HasSuffix(req.URL, "/device_authorization"):
+			deviceAuthBody = string(req.Body)
 			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"deviceCode":"dev-123","verificationUriComplete":"https://d.example/?code=WXYZ","expiresIn":600,"interval":5}`)}, nil
 		case strings.HasSuffix(req.URL, "/token"):
 			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"accessToken":"` + accessToken + `","refreshToken":"rt-` + accessToken + `","expiresIn":3600}`)}, nil
@@ -51,7 +63,14 @@ func loginOnce(t *testing.T, flowMetadata map[string]any, accessToken string) pl
 	if pollResp.Status != pluginapi.AuthLoginStatusSuccess {
 		t.Fatalf("expected success, got %+v", pollResp)
 	}
-	return pollResp.Auth
+
+	var deviceAuth struct {
+		StartURL string `json:"startUrl"`
+	}
+	if err := json.Unmarshal([]byte(deviceAuthBody), &deviceAuth); err != nil {
+		t.Fatalf("decode device auth body %q: %v", deviceAuthBody, err)
+	}
+	return pollResp.Auth, deviceAuth.StartURL
 }
 
 // Two Kiro accounts logged in back to back must produce two independent auth
@@ -62,16 +81,22 @@ func TestTwoAccountsProduceIndependentAuths(t *testing.T) {
 	resetKiroConfig(t)
 	// Account A comes from plugin config (the only path the host feeds today).
 	config.Apply(mustConfigRequest(t, "enabled: true\naccount_label: team-a\n"))
-	authA := loginOnce(t, nil, "token-a")
+	authA, startURLA := loginOnceCapturingStartURL(t, nil, "token-a")
+	if startURLA != builderIDStartURL {
+		t.Fatalf("account A startUrl %q, want the Builder ID default", startURLA)
+	}
 
 	// Account B overrides via per-login flow metadata: org IdC, different region.
-	authB := loginOnce(t, map[string]any{
+	authB, startURLB := loginOnceCapturingStartURL(t, map[string]any{
 		"oauth_flow_config": map[string]any{
 			"idc_start_url": "https://d-teamb.awsapps.com/start",
 			"idc_region":    "eu-west-1",
 			"account_label": "team-b",
 		},
 	}, "token-b")
+	if startURLB != "https://d-teamb.awsapps.com/start" {
+		t.Fatalf("flow metadata startUrl ignored, got %q", startURLB)
+	}
 
 	if authA.FileName == authB.FileName {
 		t.Fatalf("two logins collided on file name: %s", authA.FileName)
@@ -204,7 +229,10 @@ func TestMultipleDefaultAccounts(t *testing.T) {
 
 	seen := map[string]bool{}
 	for _, token := range []string{"acct-1", "acct-2", "acct-3"} {
-		auth := loginOnce(t, nil, token)
+		auth, startURL := loginOnceCapturingStartURL(t, nil, token)
+		if startURL != builderIDStartURL {
+			t.Fatalf("%s used startUrl %q, want the Builder ID default %q", token, startURL, builderIDStartURL)
+		}
 		if seen[auth.FileName] {
 			t.Fatalf("login reused a credential file: %s", auth.FileName)
 		}
@@ -340,23 +368,29 @@ func TestMixedFleetDefaultsPlusOverrides(t *testing.T) {
 		token      string
 		authMethod string
 		region     string
+		startURL   string
 	}
 	plan := []struct {
 		configYAML string
 		want       want
 	}{
-		{"enabled: true\n", want{"default-1", builderIDAuthMethod, defaultKiroRegion}},
-		{"enabled: true\n", want{"default-2", builderIDAuthMethod, defaultKiroRegion}},
-		{"enabled: true\n", want{"default-3", builderIDAuthMethod, defaultKiroRegion}},
-		{"enabled: true\nidc_start_url: https://d-teamb.awsapps.com/start\nidc_region: eu-west-1\n", want{"org-eu", idcAuthMethod, "eu-west-1"}},
-		{"enabled: true\nidc_start_url: https://d-teamc.awsapps.com/start\nidc_region: ap-northeast-1\n", want{"org-ap", idcAuthMethod, "ap-northeast-1"}},
+		{"enabled: true\n", want{"default-1", builderIDAuthMethod, defaultKiroRegion, builderIDStartURL}},
+		{"enabled: true\n", want{"default-2", builderIDAuthMethod, defaultKiroRegion, builderIDStartURL}},
+		{"enabled: true\n", want{"default-3", builderIDAuthMethod, defaultKiroRegion, builderIDStartURL}},
+		{"enabled: true\nidc_start_url: https://d-teamb.awsapps.com/start\nidc_region: eu-west-1\n", want{"org-eu", idcAuthMethod, "eu-west-1", "https://d-teamb.awsapps.com/start"}},
+		{"enabled: true\nidc_start_url: https://d-teamc.awsapps.com/start\nidc_region: ap-northeast-1\n", want{"org-ap", idcAuthMethod, "ap-northeast-1", "https://d-teamc.awsapps.com/start"}},
 	}
 
 	creds := make([]kiroCredential, 0, len(plan))
 	files := map[string]bool{}
 	for _, step := range plan {
 		config.Apply(mustConfigRequest(t, step.configYAML))
-		auth := loginOnce(t, nil, step.want.token)
+		auth, startURL := loginOnceCapturingStartURL(t, nil, step.want.token)
+		// The portal each account authorizes against: default accounts must land
+		// on the Builder ID portal, overridden ones on their own org portal.
+		if startURL != step.want.startURL {
+			t.Fatalf("%s: startUrl %q, want %q", step.want.token, startURL, step.want.startURL)
+		}
 		if files[auth.FileName] {
 			t.Fatalf("credential file reused: %s", auth.FileName)
 		}
