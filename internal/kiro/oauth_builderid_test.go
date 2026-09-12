@@ -8,10 +8,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/hostapi"
-
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
-
-	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 )
 
 // decodeLoginStart unwraps a startKiroLogin envelope into the login response.
@@ -48,17 +45,8 @@ func decodeLoginPoll(t *testing.T, raw []byte) pluginapi.AuthLoginPollResponse {
 	return resp
 }
 
-// resetKiroConfig clears the global plugin config so config-driven tests do not
-// leak state into each other.
-func resetKiroConfig(t *testing.T) {
-	t.Helper()
-	config.Apply(mustConfigRequest(t, ""))
-	t.Cleanup(func() { config.Apply(mustConfigRequest(t, "")) })
-}
-
 func TestStartKiroLoginDeviceFlow(t *testing.T) {
-	resetKiroConfig(t)
-	// No idc_start_url configured -> login falls back to AWS Builder ID.
+	// No idc_start_url in oauth flow config -> login falls back to AWS Builder ID.
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
 	var deviceAuthBody string
@@ -75,7 +63,7 @@ func TestStartKiroLoginDeviceFlow(t *testing.T) {
 		}
 	}
 
-	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1"}`))
+	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1","Metadata":{}}`))
 	if err != nil {
 		t.Fatalf("startKiroLogin: %v", err)
 	}
@@ -103,10 +91,7 @@ func TestStartKiroLoginDeviceFlow(t *testing.T) {
 }
 
 func TestStartKiroLoginOrgIdC(t *testing.T) {
-	resetKiroConfig(t)
-	// A configured idc_start_url switches the login to organization IdC.
-	config.Apply(mustConfigRequest(t, "enabled: true\nidc_start_url: https://d-9067abc.awsapps.com/start\nidc_region: eu-west-1\n"))
-
+	// A configured idc_start_url in oauth flow config switches the login to organization IdC.
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
 	var deviceAuthBody, registerURL string
@@ -124,7 +109,7 @@ func TestStartKiroLoginOrgIdC(t *testing.T) {
 		}
 	}
 
-	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1"}`))
+	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1","Metadata":{"oauth_flow_config":{"idc_start_url":"https://d-9067abc.awsapps.com/start","idc_region":"eu-west-1"}}}`))
 	if err != nil {
 		t.Fatalf("startKiroLogin: %v", err)
 	}
@@ -144,13 +129,29 @@ func TestStartKiroLoginOrgIdC(t *testing.T) {
 	}
 }
 
-func mustConfigRequest(t *testing.T, configYAML string) []byte {
-	t.Helper()
-	raw, err := json.Marshal(map[string]any{"config_yaml": []byte(configYAML)})
-	if err != nil {
-		t.Fatalf("marshal config request: %v", err)
+func TestStartKiroLoginAccountLabel(t *testing.T) {
+	oldHTTPDo := kiroHTTPDo
+	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
+	kiroHTTPDo = func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		switch {
+		case strings.HasSuffix(req.URL, "/client/register"):
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"clientId":"cid","clientSecret":"secret"}`)}, nil
+		case strings.HasSuffix(req.URL, "/device_authorization"):
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"deviceCode":"dev-123","verificationUriComplete":"https://d.example/?code=WXYZ","expiresIn":600,"interval":5}`)}, nil
+		default:
+			t.Fatalf("unexpected URL: %s", req.URL)
+			return nil, nil
+		}
 	}
-	return raw
+
+	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1","Metadata":{"account_label":"team-a"}}`))
+	if err != nil {
+		t.Fatalf("startKiroLogin: %v", err)
+	}
+	resp := decodeLoginStart(t, raw)
+	if metaString(resp.Metadata, "accountLabel") != "team-a" {
+		t.Fatalf("expected accountLabel in metadata, got %+v", resp.Metadata)
+	}
 }
 
 func TestPollKiroLoginPending(t *testing.T) {
@@ -177,7 +178,7 @@ func TestPollKiroLoginSuccess(t *testing.T) {
 	}
 
 	req := mustMarshalPollRequest(t, map[string]any{
-		"clientId": "cid", "clientSecret": "secret", "deviceCode": "dev-123", "region": "us-east-1",
+		"clientId": "cid", "clientSecret": "secret", "deviceCode": "dev-123", "region": "us-east-1", "accountLabel": "team-a",
 	})
 	resp := decodeLoginPoll(t, mustPoll(t, req))
 	if resp.Status != pluginapi.AuthLoginStatusSuccess {
@@ -185,6 +186,9 @@ func TestPollKiroLoginSuccess(t *testing.T) {
 	}
 	if resp.Auth.Provider != providerKiro || resp.Auth.FileName == "" {
 		t.Fatalf("unexpected auth data: %+v", resp.Auth)
+	}
+	if resp.Auth.Label != "Kiro ("+builderIDAuthMethod+") - team-a" {
+		t.Fatalf("unexpected auth label: %q", resp.Auth.Label)
 	}
 	if resp.Auth.NextRefreshAfter.IsZero() {
 		t.Fatalf("expected NextRefreshAfter to be set")
@@ -202,6 +206,9 @@ func TestPollKiroLoginSuccess(t *testing.T) {
 	}
 	if _, ok := resp.Auth.Metadata["refresh_interval_seconds"]; !ok {
 		t.Fatalf("metadata missing refresh_interval_seconds: %+v", resp.Auth.Metadata)
+	}
+	if metaString(resp.Auth.Metadata, "accountLabel") != "team-a" {
+		t.Fatalf("metadata missing accountLabel: %+v", resp.Auth.Metadata)
 	}
 }
 

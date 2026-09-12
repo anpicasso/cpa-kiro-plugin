@@ -8,7 +8,6 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
-	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
 
@@ -124,20 +123,19 @@ func startKiroLogin(request []byte) ([]byte, error) {
 		return nil, errUnmarshal
 	}
 
-	// The login method is inferred from config rather than chosen explicitly: a
-	// configured idc_start_url means the user wants organization IAM Identity
-	// Center (IdC) login; an empty one falls back to AWS Builder ID. The host's
-	// login entry carries no user choice, so this is the only signal available.
-	cfg := config.Get()
+	// Login behavior is driven by OAuth-flow metadata. A configured idc_start_url
+	// means the user wants organization IAM Identity Center (IdC) login; an empty
+	// one falls back to AWS Builder ID.
+	flowCfg := parseOAuthFlowConfig(req.Metadata)
 	startURL := ""
 	authMethod := builderIDAuthMethod
 	region := defaultKiroRegion
-	if strings.TrimSpace(cfg.IDCStartURL) != "" {
-		startURL = cfg.IDCStartURL
+	if flowCfg.IDCStartURL != "" {
+		startURL = flowCfg.IDCStartURL
 		authMethod = idcAuthMethod
-		// 配置里的 idc_region 会进入端点 authority,必须校验;不合法则拒绝登录,
+		// 流程配置里的 idc_region 会进入端点 authority,必须校验;不合法则拒绝登录,
 		// 而不是静默回退到默认区域(那会让用户以为配置生效了)。
-		validRegion, errRegion := validateRegion(firstNonEmptyStr(cfg.IDCRegion, defaultKiroRegion))
+		validRegion, errRegion := validateRegion(firstNonEmptyStr(flowCfg.IDCRegion, defaultKiroRegion))
 		if errRegion != nil {
 			return wire.ErrorStatus("login_invalid_region", "invalid idc_region: "+errRegion.Error(), http.StatusBadRequest), nil
 		}
@@ -170,6 +168,9 @@ func startKiroLogin(request []byte) ([]byte, error) {
 		"deviceCode":   device.DeviceCode,
 		"region":       region,
 		"interval":     interval,
+	}
+	if flowCfg.AccountLabel != "" {
+		metadata["accountLabel"] = flowCfg.AccountLabel
 	}
 	if device.UserCode != "" {
 		metadata["userCode"] = device.UserCode
@@ -223,7 +224,7 @@ func pollKiroLogin(request []byte) ([]byte, error) {
 	}
 
 	if token.AccessToken != "" {
-		return wire.OK(buildLoginSuccess(token, clientID, clientSecret, region, authMethod))
+		return wire.OK(buildLoginSuccess(token, clientID, clientSecret, region, authMethod, metaString(metadata, "accountLabel")))
 	}
 
 	switch token.Error {
@@ -245,7 +246,7 @@ func pollKiroLogin(request []byte) ([]byte, error) {
 // expiresAt + refresh_interval_seconds, and NextRefreshAfter for proactive
 // refresh). authMethod distinguishes AWS Builder ID from org IdC; both refresh
 // through the same SSO OIDC token endpoint.
-func buildLoginSuccess(token *oidcTokenResponse, clientID, clientSecret, region, authMethod string) pluginapi.AuthLoginPollResponse {
+func buildLoginSuccess(token *oidcTokenResponse, clientID, clientSecret, region, authMethod, accountLabel string) pluginapi.AuthLoginPollResponse {
 	if authMethod == "" {
 		authMethod = builderIDAuthMethod
 	}
@@ -282,6 +283,9 @@ func buildLoginSuccess(token *oidcTokenResponse, clientID, clientSecret, region,
 		"region":                   region,
 		"refresh_interval_seconds": refreshIntervalSeconds,
 	}
+	if accountLabel != "" {
+		metadata["accountLabel"] = accountLabel
+	}
 
 	return pluginapi.AuthLoginPollResponse{
 		Status: pluginapi.AuthLoginStatusSuccess,
@@ -289,12 +293,66 @@ func buildLoginSuccess(token *oidcTokenResponse, clientID, clientSecret, region,
 			Provider:         providerKiro,
 			ID:               fileName,
 			FileName:         fileName,
-			Label:            "Kiro (" + authMethod + ")",
+			Label:            makeAuthLabel(authMethod, accountLabel),
 			StorageJSON:      storage,
 			Metadata:         metadata,
 			NextRefreshAfter: expiresAt.Add(-refreshLeadTime),
 		},
 	}
+}
+
+type oauthFlowConfig struct {
+	IDCStartURL  string
+	IDCRegion    string
+	AccountLabel string
+}
+
+func parseOAuthFlowConfig(metadata map[string]any) oauthFlowConfig {
+	if metadata == nil {
+		return oauthFlowConfig{}
+	}
+	read := func(m map[string]any, keys ...string) string {
+		for _, key := range keys {
+			if v, ok := m[key]; ok {
+				if s, ok := v.(string); ok {
+					if trimmed := strings.TrimSpace(s); trimmed != "" {
+						return trimmed
+					}
+				}
+			}
+		}
+		return ""
+	}
+
+	flowCfg := oauthFlowConfig{
+		IDCStartURL:  read(metadata, "idc_start_url", "idcStartURL"),
+		IDCRegion:    read(metadata, "idc_region", "idcRegion"),
+		AccountLabel: read(metadata, "account_label", "accountLabel"),
+	}
+
+	for _, key := range []string{"oauth_flow_config", "oauthFlowConfig", "oauth_config", "oauthConfig"} {
+		nested, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		nestedMap, ok := nested.(map[string]any)
+		if !ok {
+			continue
+		}
+		flowCfg.IDCStartURL = firstNonEmptyStr(flowCfg.IDCStartURL, read(nestedMap, "idc_start_url", "idcStartURL"))
+		flowCfg.IDCRegion = firstNonEmptyStr(flowCfg.IDCRegion, read(nestedMap, "idc_region", "idcRegion"))
+		flowCfg.AccountLabel = firstNonEmptyStr(flowCfg.AccountLabel, read(nestedMap, "account_label", "accountLabel"))
+	}
+
+	return flowCfg
+}
+
+func makeAuthLabel(authMethod, accountLabel string) string {
+	label := "Kiro (" + authMethod + ")"
+	if accountLabel != "" {
+		label += " - " + accountLabel
+	}
+	return label
 }
 
 // metaString reads a string value from a login metadata map, tolerating the

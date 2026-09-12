@@ -42,23 +42,21 @@ plugins:
   configs:
     kiro:
       enabled: true
-      # 不填 idc_start_url 即用 AWS Builder ID 登录；填了则走组织 IDC，见下表
-      # idc_start_url: "https://d-xxxx.awsapps.com/start"
-      # idc_region: "us-east-1"
 ```
 
-## 配置字段
+## OAuth 流程配置字段
 
-`plugins.configs.kiro.*`：
+在发起 Kiro 登录的 OAuth 流程配置中设置：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `idc_start_url` | 字符串 | 组织 IAM Identity Center 门户 start URL，如 `https://d-xxxx.awsapps.com/start`。**填了就走组织 IDC 登录，留空则走 AWS Builder ID（个人账号）登录** |
+| `idc_start_url` | 字符串 | 组织 IAM Identity Center 门户 start URL，如 `https://d-xxxx.awsapps.com/start`。**填了就走组织 IDC 登录；留空/缺失则走 AWS Builder ID（个人账号）登录，并使用默认 start URL** |
 | `idc_region` | 字符串 | 承载你的 Identity Center 实例的 AWS 区域，仅 IDC 登录时使用，留空回退 `us-east-1` |
+| `account_label` | 字符串 | 可选标签，会写入认证元数据与显示名称，便于区分多个 Kiro 账号 |
 
 ## 登录方式
 
-登录方式由 `idc_start_url` 是否配置**隐式决定**：
+登录方式由 OAuth 流程配置里的 `idc_start_url` 是否配置**隐式决定**：
 
 - **AWS Builder ID（默认，个人免费账号）**：`idc_start_url` 留空即可。保存配置后到面板「Kiro OAuth」页发起设备码登录，浏览器授权即可，无需其它字段。
 - **组织 IDC（IAM Identity Center）**：填写 `idc_start_url`（组织门户 URL），需要时再填 `idc_region`（留空默认 `us-east-1`）。保存后同样在「Kiro OAuth」页发起设备码登录。
