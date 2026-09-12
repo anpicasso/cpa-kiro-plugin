@@ -6,6 +6,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
+	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
 
@@ -15,6 +16,7 @@ func HandleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	// ---- lifecycle ----
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
+		config.Apply(request)
 		return wire.OK(kiroRegistration())
 	case pluginabi.MethodPluginQuiesce, pluginabi.MethodPluginShutdown:
 		return wire.OK(map[string]any{})
@@ -69,6 +71,11 @@ func kiroRegistration() registration {
 			Version:          "0.1.1",
 			Author:           "xiaokui-dev",
 			GitHubRepository: "https://github.com/xiaokui-dev/cliproxyapi-kiro-plugin",
+			ConfigFields: []pluginapi.ConfigField{
+				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "Organization IAM Identity Center portal start URL. Default for new logins; empty means AWS Builder ID."},
+				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "AWS Region that hosts your Identity Center instance."},
+				{Name: "account_label", Type: pluginapi.ConfigFieldTypeString, Description: "Optional label appended to the auth label to tell multiple Kiro accounts apart."},
+			},
 		},
 		Capabilities: registrationCapability{
 			AuthProvider:          true,

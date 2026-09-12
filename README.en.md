@@ -42,11 +42,15 @@ plugins:
   configs:
     kiro:
       enabled: true
+      # Leave idc_start_url empty to log in with AWS Builder ID; set it to use organization IDC. See the table below.
+      # idc_start_url: "https://d-xxxx.awsapps.com/start"
+      # idc_region: "us-east-1"
+      # account_label: "team-a"
 ```
 
-## OAuth flow config fields
+## Configuration fields
 
-Set these in the OAuth flow config when starting Kiro login:
+`plugins.configs.kiro.*` provides the defaults. If the host sends OAuth flow config at login time (top level or under `oauth_flow_config`), the flow config wins.
 
 | Field | Type | Description |
 |---|---|---|
@@ -56,7 +60,7 @@ Set these in the OAuth flow config when starting Kiro login:
 
 ## Login methods
 
-The login method is **inferred** from OAuth flow config `idc_start_url`:
+The login method is **inferred** from the effective `idc_start_url`:
 
 - **AWS Builder ID (default, personal free account)**: leave `idc_start_url` empty. After saving, start the device-code login from the "Kiro OAuth" page in the panel and authorize in the browser — no other fields needed.
 - **Organization IDC (IAM Identity Center)**: fill in `idc_start_url` (the organization portal URL), and `idc_region` if needed (defaults to `us-east-1` when empty). Start the device-code login from the "Kiro OAuth" page after saving.

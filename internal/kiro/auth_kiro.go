@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
+	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
 
@@ -123,9 +124,9 @@ func startKiroLogin(request []byte) ([]byte, error) {
 		return nil, errUnmarshal
 	}
 
-	// Login behavior is driven by OAuth-flow metadata. A configured idc_start_url
-	// means the user wants organization IAM Identity Center (IdC) login; an empty
-	// one falls back to AWS Builder ID.
+	// Login behavior comes from plugin config, overridden by per-login OAuth-flow
+	// metadata. A configured idc_start_url means the user wants organization IAM
+	// Identity Center (IdC) login; an empty one falls back to AWS Builder ID.
 	flowCfg := parseOAuthFlowConfig(req.Metadata)
 	startURL := ""
 	authMethod := builderIDAuthMethod
@@ -133,7 +134,7 @@ func startKiroLogin(request []byte) ([]byte, error) {
 	if flowCfg.IDCStartURL != "" {
 		startURL = flowCfg.IDCStartURL
 		authMethod = idcAuthMethod
-		// 流程配置里的 idc_region 会进入端点 authority,必须校验;不合法则拒绝登录,
+		// 配置/流程里的 idc_region 会进入端点 authority,必须校验;不合法则拒绝登录,
 		// 而不是静默回退到默认区域(那会让用户以为配置生效了)。
 		validRegion, errRegion := validateRegion(firstNonEmptyStr(flowCfg.IDCRegion, defaultKiroRegion))
 		if errRegion != nil {
@@ -307,41 +308,39 @@ type oauthFlowConfig struct {
 	AccountLabel string
 }
 
+// parseOAuthFlowConfig resolves the login settings for one login attempt.
+// Plugin config (plugins.configs.kiro.*) supplies the defaults; per-login OAuth
+// flow metadata overrides them when the host sends any. As of CLIProxyAPI
+// v7.2.146 the host never populates AuthLoginStartRequest.Metadata, so config is
+// in practice the only source — the metadata path is here so org IdC keeps
+// working unchanged once the host does send it.
+// ponytail: only snake_case keys are read, top level and under
+// "oauth_flow_config"; add camelCase aliases when a host actually sends them.
 func parseOAuthFlowConfig(metadata map[string]any) oauthFlowConfig {
-	if metadata == nil {
-		return oauthFlowConfig{}
-	}
-	read := func(m map[string]any, keys ...string) string {
-		for _, key := range keys {
-			if v, ok := m[key]; ok {
-				if s, ok := v.(string); ok {
-					if trimmed := strings.TrimSpace(s); trimmed != "" {
-						return trimmed
-					}
-				}
-			}
-		}
-		return ""
-	}
-
+	cfg := config.Get()
 	flowCfg := oauthFlowConfig{
-		IDCStartURL:  read(metadata, "idc_start_url", "idcStartURL"),
-		IDCRegion:    read(metadata, "idc_region", "idcRegion"),
-		AccountLabel: read(metadata, "account_label", "accountLabel"),
+		IDCStartURL:  cfg.IDCStartURL,
+		IDCRegion:    cfg.IDCRegion,
+		AccountLabel: cfg.AccountLabel,
 	}
 
-	for _, key := range []string{"oauth_flow_config", "oauthFlowConfig", "oauth_config", "oauthConfig"} {
-		nested, ok := metadata[key]
-		if !ok {
-			continue
+	read := func(m map[string]any, key string) string {
+		s, _ := m[key].(string)
+		return strings.TrimSpace(s)
+	}
+	apply := func(m map[string]any) {
+		if m == nil {
+			return
 		}
-		nestedMap, ok := nested.(map[string]any)
-		if !ok {
-			continue
-		}
-		flowCfg.IDCStartURL = firstNonEmptyStr(flowCfg.IDCStartURL, read(nestedMap, "idc_start_url", "idcStartURL"))
-		flowCfg.IDCRegion = firstNonEmptyStr(flowCfg.IDCRegion, read(nestedMap, "idc_region", "idcRegion"))
-		flowCfg.AccountLabel = firstNonEmptyStr(flowCfg.AccountLabel, read(nestedMap, "account_label", "accountLabel"))
+		flowCfg.IDCStartURL = firstNonEmptyStr(read(m, "idc_start_url"), flowCfg.IDCStartURL)
+		flowCfg.IDCRegion = firstNonEmptyStr(read(m, "idc_region"), flowCfg.IDCRegion)
+		flowCfg.AccountLabel = firstNonEmptyStr(read(m, "account_label"), flowCfg.AccountLabel)
+	}
+
+	apply(metadata)
+	if metadata != nil {
+		nested, _ := metadata["oauth_flow_config"].(map[string]any)
+		apply(nested)
 	}
 
 	return flowCfg

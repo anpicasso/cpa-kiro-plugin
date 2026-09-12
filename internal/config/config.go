@@ -17,8 +17,9 @@ import (
 // CodeWhisperer/OIDC region is not configurable for Builder ID (it always uses
 // the default, us-east-1); IdC uses IDCRegion.
 type Config struct {
-	IDCStartURL string `yaml:"idc_start_url"`
-	IDCRegion   string `yaml:"idc_region"`
+	IDCStartURL  string `yaml:"idc_start_url"`
+	IDCRegion    string `yaml:"idc_region"`
+	AccountLabel string `yaml:"account_label"`
 }
 
 var (
@@ -48,6 +49,7 @@ func Apply(request []byte) {
 	}
 	cfg.IDCStartURL = strings.TrimSpace(cfg.IDCStartURL)
 	cfg.IDCRegion = strings.TrimSpace(cfg.IDCRegion)
+	cfg.AccountLabel = strings.TrimSpace(cfg.AccountLabel)
 
 	mu.Lock()
 	current = cfg

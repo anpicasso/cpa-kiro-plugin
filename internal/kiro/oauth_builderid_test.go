@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 
+	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/hostapi"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
@@ -45,7 +46,25 @@ func decodeLoginPoll(t *testing.T, raw []byte) pluginapi.AuthLoginPollResponse {
 	return resp
 }
 
+// resetKiroConfig clears the global plugin config so config-driven tests do not
+// leak state into each other.
+func resetKiroConfig(t *testing.T) {
+	t.Helper()
+	config.Apply(mustConfigRequest(t, ""))
+	t.Cleanup(func() { config.Apply(mustConfigRequest(t, "")) })
+}
+
+func mustConfigRequest(t *testing.T, configYAML string) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"config_yaml": []byte(configYAML)})
+	if err != nil {
+		t.Fatalf("marshal config request: %v", err)
+	}
+	return raw
+}
+
 func TestStartKiroLoginDeviceFlow(t *testing.T) {
+	resetKiroConfig(t)
 	// No idc_start_url in oauth flow config -> login falls back to AWS Builder ID.
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
@@ -91,6 +110,7 @@ func TestStartKiroLoginDeviceFlow(t *testing.T) {
 }
 
 func TestStartKiroLoginOrgIdC(t *testing.T) {
+	resetKiroConfig(t)
 	// A configured idc_start_url in oauth flow config switches the login to organization IdC.
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
@@ -130,6 +150,7 @@ func TestStartKiroLoginOrgIdC(t *testing.T) {
 }
 
 func TestStartKiroLoginAccountLabel(t *testing.T) {
+	resetKiroConfig(t)
 	oldHTTPDo := kiroHTTPDo
 	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
 	kiroHTTPDo = func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
@@ -151,6 +172,65 @@ func TestStartKiroLoginAccountLabel(t *testing.T) {
 	resp := decodeLoginStart(t, raw)
 	if metaString(resp.Metadata, "accountLabel") != "team-a" {
 		t.Fatalf("expected accountLabel in metadata, got %+v", resp.Metadata)
+	}
+}
+
+// Plugin config supplies the login defaults when the host sends no metadata
+// (CLIProxyAPI v7.2.146 never does), and per-login metadata overrides it.
+func TestStartKiroLoginConfigDefaultsAndOverride(t *testing.T) {
+	resetKiroConfig(t)
+	config.Apply(mustConfigRequest(t, "enabled: true\nidc_start_url: https://d-cfg.awsapps.com/start\nidc_region: eu-west-1\naccount_label: from-config\n"))
+
+	oldHTTPDo := kiroHTTPDo
+	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
+	var deviceAuthBody, registerURL string
+	kiroHTTPDo = func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		switch {
+		case strings.HasSuffix(req.URL, "/client/register"):
+			registerURL = req.URL
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"clientId":"cid","clientSecret":"secret"}`)}, nil
+		case strings.HasSuffix(req.URL, "/device_authorization"):
+			deviceAuthBody = string(req.Body)
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"deviceCode":"dev-123","verificationUriComplete":"https://d.example/?code=WXYZ","expiresIn":600,"interval":5}`)}, nil
+		default:
+			t.Fatalf("unexpected URL: %s", req.URL)
+			return nil, nil
+		}
+	}
+
+	// No metadata at all -> config drives the whole login.
+	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1"}`))
+	if err != nil {
+		t.Fatalf("startKiroLogin: %v", err)
+	}
+	resp := decodeLoginStart(t, raw)
+	if !strings.Contains(deviceAuthBody, "https://d-cfg.awsapps.com/start") {
+		t.Fatalf("config start URL not used: %s", deviceAuthBody)
+	}
+	if !strings.Contains(registerURL, "eu-west-1") {
+		t.Fatalf("config region not used: %s", registerURL)
+	}
+	if metaString(resp.Metadata, "authMethod") != idcAuthMethod {
+		t.Fatalf("expected idc auth method, got %+v", resp.Metadata)
+	}
+	if metaString(resp.Metadata, "accountLabel") != "from-config" {
+		t.Fatalf("expected config account label, got %+v", resp.Metadata)
+	}
+
+	// Metadata wins over config when the host does send it.
+	raw, err = startKiroLogin([]byte(`{"Provider":"kiro","host_callback_id":"cb-1","Metadata":{"oauth_flow_config":{"idc_start_url":"https://d-meta.awsapps.com/start","idc_region":"us-west-2","account_label":"from-meta"}}}`))
+	if err != nil {
+		t.Fatalf("startKiroLogin: %v", err)
+	}
+	resp = decodeLoginStart(t, raw)
+	if !strings.Contains(deviceAuthBody, "https://d-meta.awsapps.com/start") {
+		t.Fatalf("metadata start URL did not override config: %s", deviceAuthBody)
+	}
+	if !strings.Contains(registerURL, "us-west-2") {
+		t.Fatalf("metadata region did not override config: %s", registerURL)
+	}
+	if metaString(resp.Metadata, "accountLabel") != "from-meta" {
+		t.Fatalf("metadata label did not override config: %+v", resp.Metadata)
 	}
 }
 
