@@ -75,7 +75,7 @@ func kiroRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             providerKiro,
-			Version:          "0.2.2",
+			Version:          "2.0.0",
 			Author:           "anpicasso",
 			GitHubRepository: "https://github.com/anpicasso/cpa-kiro-plugin",
 			Logo:             kiroLogo,
