@@ -37,11 +37,18 @@ type framePayload struct {
 // all big-endian. The event type is read from the frame's :event-type header, with a
 // payload-shape fallback for frames without it.
 func parseEventStreamFrames(buffer []byte) []cwEvent {
+	events, _ := consumeEventStreamFrames(buffer)
+	return events
+}
+
+// consumeEventStreamFrames decodes complete frames and retains a trailing partial
+// frame for the next host stream read.
+func consumeEventStreamFrames(buffer []byte) ([]cwEvent, []byte) {
 	events := make([]cwEvent, 0, 16)
 	offset := 0
 	for {
 		if len(buffer)-offset < 12 {
-			break
+			return events, append([]byte(nil), buffer[offset:]...)
 		}
 		totalLen := int(beUint32(buffer, offset))
 		headersLen := int(beUint32(buffer, offset+4))
@@ -51,9 +58,8 @@ func parseEventStreamFrames(buffer []byte) []cwEvent {
 			offset++
 			continue
 		}
-		// Incomplete frame: stop (host.http.do returns the full body, so this is EOF).
 		if len(buffer)-offset < totalLen {
-			break
+			return events, append([]byte(nil), buffer[offset:]...)
 		}
 
 		frameStart := offset
@@ -73,7 +79,6 @@ func parseEventStreamFrames(buffer []byte) []cwEvent {
 			events = append(events, ev...)
 		}
 	}
-	return events
 }
 
 // classifyFrame maps an event type + payload to zero or more cwEvents.
@@ -118,6 +123,7 @@ func classifyToolUse(p framePayload) ([]cwEvent, bool) {
 			Kind:      cwEventToolUseInput,
 			ToolUseID: p.ToolUseID,
 			Text:      normalizeToolInput(p.Input),
+			Stop:      p.Stop,
 		}}, true
 	}
 	return nil, false

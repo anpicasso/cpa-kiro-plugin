@@ -142,24 +142,112 @@ func executeKiro(request []byte) ([]byte, error) {
 	})
 }
 
-// executeKiroStream handles a streaming request. It fetches the full upstream
-// response, then emits a complete Claude SSE sequence as ordered chunks (the
-// host forwards them one by one). End-to-end incremental streaming from upstream
-// is a later optimization.
+// executeKiroStream opens a live Kiro response stream and forwards each decoded
+// event immediately as Claude SSE. Unlike fetchKiroEvents, it intentionally
+// does not retry: a retry after any emitted byte would duplicate the response.
 func executeKiroStream(request []byte) ([]byte, error) {
-	res, errEnv, err := fetchKiroEvents(request)
-	if err != nil {
-		return nil, err
+	var req executorRequest
+	if errUnmarshal := json.Unmarshal(request, &req); errUnmarshal != nil {
+		return nil, errUnmarshal
 	}
-	if errEnv != nil {
-		return errEnv, nil
+	if strings.TrimSpace(req.StreamID) == "" {
+		return wire.ErrorStatus("invalid_request", "kiro stream_id is required", http.StatusBadRequest), nil
 	}
 
-	chunks := buildClaudeStreamChunks(res.text, res.calls, res.model, estimateTokens(len(res.requestPayload)))
-	return wire.OK(executorStreamResponse{
-		Headers: map[string][]string{"Content-Type": {"text/event-stream"}},
-		Chunks:  chunks,
+	var creq claudeRequest
+	if errUnmarshal := json.Unmarshal(req.Payload, &creq); errUnmarshal != nil {
+		return nil, fmt.Errorf("decode claude request: %w", errUnmarshal)
+	}
+	var cred kiroCredential
+	if errUnmarshal := json.Unmarshal(req.StorageJSON, &cred); errUnmarshal != nil {
+		return nil, fmt.Errorf("decode kiro credential: %w", errUnmarshal)
+	}
+	if strings.TrimSpace(cred.AccessToken) == "" {
+		return wire.ErrorStatus("invalid_credential", "kiro credential has no accessToken", http.StatusUnauthorized), nil
+	}
+
+	model := firstNonEmptyStr(req.Model, creq.Model)
+	region, errRegion := resolveRegion(cred.Region, cred.IDCRegion)
+	if errRegion != nil {
+		return wire.ErrorStatus("invalid_credential", "invalid kiro credential region: "+errRegion.Error(), http.StatusBadRequest), nil
+	}
+	url, errURL := safeEndpoint(generateURLTemplate, region, "")
+	if errURL != nil {
+		return wire.ErrorStatus("invalid_credential", "invalid kiro endpoint: "+errURL.Error(), http.StatusBadRequest), nil
+	}
+	cwReq, maps := buildCodeWhispererRequest(creq, model, cred)
+	cwBody, errMarshal := json.Marshal(cwReq)
+	if errMarshal != nil {
+		return nil, fmt.Errorf("encode codewhisperer request: %w", errMarshal)
+	}
+
+	upstream, errDo := kiroHTTPDoStream(hostapi.HTTPRequest{
+		HostCallbackID: req.HostCallbackID,
+		Method:         http.MethodPost,
+		URL:            url,
+		Headers:        kiroRequestHeaders(cred),
+		Body:           cwBody,
 	})
+	if errDo != nil {
+		return wire.ErrorStatus("upstream_error", errDo.Error(), http.StatusBadGateway), nil
+	}
+	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 {
+		_ = kiroHTTPStreamClose(upstream.StreamID)
+		return wire.ErrorStatus("upstream_status", fmt.Sprintf("kiro generateAssistantResponse HTTP %d", upstream.StatusCode), upstream.StatusCode), nil
+	}
+
+	response, errResponse := wire.OK(executorStreamResponse{Headers: map[string][]string{"Content-Type": {"text/event-stream"}}})
+	if errResponse != nil {
+		_ = kiroHTTPStreamClose(upstream.StreamID)
+		return nil, errResponse
+	}
+	go func() {
+		errForward := forwardKiroStream(upstream.StreamID, req.StreamID, model, estimateTokens(len(req.Payload)), maps)
+		errText := ""
+		if errForward != nil {
+			errText = errForward.Error()
+		}
+		_ = kiroStreamClose(req.StreamID, errText)
+	}()
+	return response, nil
+}
+
+func forwardKiroStream(upstreamID, pluginStreamID, model string, inputTokens int, maps *toolNameMaps) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("kiro stream panic: %v", recovered)
+		}
+		_ = kiroHTTPStreamClose(upstreamID)
+	}()
+
+	writer := newClaudeStreamWriter(model, inputTokens, maps, func(payload []byte) error {
+		return kiroStreamEmit(pluginStreamID, payload)
+	})
+	if errStart := writer.start(); errStart != nil {
+		return errStart
+	}
+
+	var pending []byte
+	for {
+		chunk, errRead := kiroHTTPStreamRead(upstreamID)
+		if errRead != nil {
+			return errRead
+		}
+		if chunk.Error != "" {
+			return fmt.Errorf("kiro upstream stream: %s", chunk.Error)
+		}
+		pending = append(pending, chunk.Payload...)
+		events, rest := consumeEventStreamFrames(pending)
+		pending = rest
+		for _, event := range events {
+			if errWrite := writer.write(event); errWrite != nil {
+				return errWrite
+			}
+		}
+		if chunk.Done {
+			return writer.finish()
+		}
+	}
 }
 
 // kiroRequestHeaders builds the AWS/KiroIDE headers required by CodeWhisperer.

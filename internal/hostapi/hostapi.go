@@ -46,6 +46,20 @@ type HTTPResponse struct {
 	Body       []byte              `json:"Body"`
 }
 
+// HTTPStreamResponse mirrors the host's rpcHostHTTPStreamResponse.
+type HTTPStreamResponse struct {
+	StatusCode int                 `json:"status_code"`
+	Headers    map[string][]string `json:"headers,omitempty"`
+	StreamID   string              `json:"stream_id,omitempty"`
+}
+
+// HTTPStreamReadResponse mirrors the host's rpcHostHTTPStreamReadResponse.
+type HTTPStreamReadResponse struct {
+	Payload []byte `json:"payload,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Done    bool   `json:"done,omitempty"`
+}
+
 // HTTPDo executes an HTTP request through the host transport (proxy, request
 // logging) via the host.http.do callback and returns the response.
 func HTTPDo(req HTTPRequest) (*HTTPResponse, error) {
@@ -74,6 +88,69 @@ func HTTPDo(req HTTPRequest) (*HTTPResponse, error) {
 		}
 	}
 	return &resp, nil
+}
+
+// HTTPDoStream starts an HTTP stream through the host transport. The returned
+// stream must be read with HTTPStreamRead and closed with HTTPStreamClose.
+func HTTPDoStream(req HTTPRequest) (*HTTPStreamResponse, error) {
+	payload, errMarshal := json.Marshal(req)
+	if errMarshal != nil {
+		return nil, errMarshal
+	}
+	var resp HTTPStreamResponse
+	if err := callJSON(pluginabi.MethodHostHTTPDoStream, payload, &resp); err != nil {
+		return nil, err
+	}
+	if resp.StreamID == "" {
+		return nil, fmt.Errorf("host http stream returned no stream_id")
+	}
+	return &resp, nil
+}
+
+// HTTPStreamRead reads the next raw upstream chunk.
+func HTTPStreamRead(streamID string) (*HTTPStreamReadResponse, error) {
+	payload, errMarshal := json.Marshal(map[string]string{"stream_id": streamID})
+	if errMarshal != nil {
+		return nil, errMarshal
+	}
+	var resp HTTPStreamReadResponse
+	if err := callJSON(pluginabi.MethodHostHTTPStreamRead, payload, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// HTTPStreamClose cancels and releases an upstream stream.
+func HTTPStreamClose(streamID string) error {
+	payload, errMarshal := json.Marshal(map[string]string{"stream_id": streamID})
+	if errMarshal != nil {
+		return errMarshal
+	}
+	return callJSON(pluginabi.MethodHostHTTPStreamClose, payload, nil)
+}
+
+// StreamEmit appends a payload to the client-facing plugin stream.
+func StreamEmit(streamID string, payload []byte) error {
+	request, errMarshal := json.Marshal(struct {
+		StreamID string `json:"stream_id"`
+		Payload  []byte `json:"payload,omitempty"`
+	}{StreamID: streamID, Payload: payload})
+	if errMarshal != nil {
+		return errMarshal
+	}
+	return callJSON(pluginabi.MethodHostStreamEmit, request, nil)
+}
+
+// StreamClose completes the client-facing plugin stream, optionally with an error.
+func StreamClose(streamID, errMsg string) error {
+	payload, errMarshal := json.Marshal(struct {
+		StreamID string `json:"stream_id"`
+		Error    string `json:"error,omitempty"`
+	}{StreamID: streamID, Error: errMsg})
+	if errMarshal != nil {
+		return errMarshal
+	}
+	return callJSON(pluginabi.MethodHostStreamClose, payload, nil)
 }
 
 // callJSON invokes a host callback and unmarshals the {ok,result} envelope's

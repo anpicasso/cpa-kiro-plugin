@@ -6,7 +6,12 @@ import "github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/hostapi"
 // handlers can be unit-tested without a live host. Tests replace these package
 // variables and restore them via t.Cleanup.
 var (
-	kiroHTTPDo     = hostapi.HTTPDo
-	hostAuthListFn = hostapi.AuthList
-	hostAuthGetFn  = hostapi.AuthGet
+	kiroHTTPDo          = hostapi.HTTPDo
+	kiroHTTPDoStream    = hostapi.HTTPDoStream
+	kiroHTTPStreamRead  = hostapi.HTTPStreamRead
+	kiroHTTPStreamClose = hostapi.HTTPStreamClose
+	kiroStreamEmit      = hostapi.StreamEmit
+	kiroStreamClose     = hostapi.StreamClose
+	hostAuthListFn      = hostapi.AuthList
+	hostAuthGetFn       = hostapi.AuthGet
 )
