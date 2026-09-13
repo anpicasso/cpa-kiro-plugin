@@ -2,6 +2,7 @@ package kiro
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -29,10 +30,22 @@ func TestBuildSingleUserWithSystemPrepends(t *testing.T) {
 	if len(req.ConversationState.History) != 0 {
 		t.Fatalf("expected no history for single-turn, got %d", len(req.ConversationState.History))
 	}
-	// No tools provided -> placeholder tool must be injected.
-	ctx := cur.UserInputMessageContext
-	if ctx == nil || len(ctx.Tools) != 1 || ctx.Tools[0].ToolSpecification.Name != kiroPlaceholderToolName {
-		t.Fatalf("expected placeholder tool, got %+v", ctx)
+	if cur.UserInputMessageContext != nil {
+		t.Fatalf("no tools must omit userInputMessageContext, got %+v", cur.UserInputMessageContext)
+	}
+}
+
+func TestBuildOmitsUnsupportedAgentTaskType(t *testing.T) {
+	req := buildFromJSON(t, `{
+		"model":"claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hi"}]
+	}`, kiroCredential{})
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if strings.Contains(string(raw), "agentTaskType") {
+		t.Fatalf("runtime request must omit agentTaskType: %s", raw)
 	}
 }
 

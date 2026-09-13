@@ -8,7 +8,6 @@ import (
 const (
 	originAIEditor          = "AI_EDITOR"
 	chatTriggerManual       = "MANUAL"
-	agentTaskVibe           = "vibe"
 	kiroPlaceholderToolName = "no_tool_available"
 	maxToolNameLength       = 64
 	maxToolDescriptionLen   = 9216
@@ -61,7 +60,6 @@ type cwRequest struct {
 }
 
 type cwConversationState struct {
-	AgentTaskType   string           `json:"agentTaskType"`
 	ChatTriggerType string           `json:"chatTriggerType"`
 	ConversationID  string           `json:"conversationId"`
 	History         []cwHistoryItem  `json:"history,omitempty"`
@@ -283,7 +281,6 @@ func buildCodeWhispererRequest(creq claudeRequest, model string, cred kiroCreden
 
 	req := &cwRequest{
 		ConversationState: cwConversationState{
-			AgentTaskType:   agentTaskVibe,
 			ChatTriggerType: chatTriggerManual,
 			ConversationID:  uuidV4(),
 			CurrentMessage:  cwCurrentMessage{UserInputMessage: *current},
@@ -404,12 +401,10 @@ func buildAssistantMessage(blocks []claudeBlock, maps *toolNameMaps) *cwAssistan
 	return arm
 }
 
-// buildToolsContext converts Claude tools to CW tools, always returning at least
-// one tool: the placeholder is injected when no usable tool is available, because
-// CodeWhisperer rejects an empty tools list.
+// buildToolsContext converts usable Claude tools to CW tools.
 func buildToolsContext(tools []claudeTool, maps *toolNameMaps) []cwTool {
 	if len(tools) == 0 {
-		return []cwTool{placeholderTool()}
+		return nil
 	}
 	kiroTools := make([]cwTool, 0, len(tools))
 	for _, tool := range tools {
@@ -435,17 +430,9 @@ func buildToolsContext(tools []claudeTool, maps *toolNameMaps) []cwTool {
 		}})
 	}
 	if len(kiroTools) == 0 {
-		return []cwTool{placeholderTool()}
+		return nil
 	}
 	return kiroTools
-}
-
-func placeholderTool() cwTool {
-	return cwTool{ToolSpecification: cwToolSpec{
-		Name:        kiroPlaceholderToolName,
-		Description: "Internal no-op placeholder. Never call this tool (or any tool) in this turn. Do not announce or promise actions such as reading files or running commands. Instead, write your full and complete answer directly as natural-language text in this single reply, based on the information already available to you.",
-		InputSchema: cwInputSchema{JSON: json.RawMessage(`{"type":"object","properties":{}}`)},
-	}}
 }
 
 func dedupToolResults(results []cwToolResult) []cwToolResult {

@@ -207,13 +207,23 @@ func executeKiroStream(request []byte) ([]byte, error) {
 		return wire.ErrorStatus("upstream_status", fmt.Sprintf("kiro generateAssistantResponse HTTP %d", upstream.StatusCode), upstream.StatusCode), nil
 	}
 
+	writer := newClaudeStreamWriter(model, estimateTokens(len(req.Payload)), maps, func(payload []byte) error {
+		return kiroStreamEmit(req.StreamID, payload)
+	})
+	// Emit the stream prefix while the executor call is still active. This gives
+	// CPA a first byte before the asynchronous upstream reader takes over.
+	if errStart := writer.start(); errStart != nil {
+		_ = kiroHTTPStreamClose(upstream.StreamID)
+		return wire.ErrorStatus("upstream_error", errStart.Error(), http.StatusBadGateway), nil
+	}
+
 	response, errResponse := wire.OK(executorStreamResponse{Headers: map[string][]string{"Content-Type": {"text/event-stream"}}})
 	if errResponse != nil {
 		_ = kiroHTTPStreamClose(upstream.StreamID)
 		return nil, errResponse
 	}
 	go func() {
-		errForward := forwardKiroStream(upstream.StreamID, req.StreamID, model, estimateTokens(len(req.Payload)), maps)
+		errForward := forwardKiroStream(upstream.StreamID, writer)
 		errText := ""
 		if errForward != nil {
 			errText = errForward.Error()
@@ -223,20 +233,13 @@ func executeKiroStream(request []byte) ([]byte, error) {
 	return response, nil
 }
 
-func forwardKiroStream(upstreamID, pluginStreamID, model string, inputTokens int, maps *toolNameMaps) (err error) {
+func forwardKiroStream(upstreamID string, writer *claudeStreamWriter) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("kiro stream panic: %v", recovered)
 		}
 		_ = kiroHTTPStreamClose(upstreamID)
 	}()
-
-	writer := newClaudeStreamWriter(model, inputTokens, maps, func(payload []byte) error {
-		return kiroStreamEmit(pluginStreamID, payload)
-	})
-	if errStart := writer.start(); errStart != nil {
-		return errStart
-	}
 
 	var pending []byte
 	for {
