@@ -292,7 +292,7 @@ func buildCodeWhispererRequest(creq claudeRequest, model string, cred kiroCreden
 	if len(history) > 0 {
 		req.ConversationState.History = history
 	}
-	if strings.EqualFold(strings.TrimSpace(cred.AuthMethod), "social") && cred.ProfileArn != "" {
+	if strings.TrimSpace(cred.ProfileArn) != "" {
 		req.ProfileArn = cred.ProfileArn
 	}
 	return req, maps

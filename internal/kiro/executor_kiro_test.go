@@ -11,6 +11,21 @@ import (
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
 
+func TestCredentialWithProfileArnDiscovers(t *testing.T) {
+	oldHTTPDo := kiroHTTPDo
+	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
+	kiroHTTPDo = func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if req.URL != "https://management.us-east-1.kiro.dev/" {
+			t.Fatalf("unexpected discovery URL: %q", req.URL)
+		}
+		return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"profiles":[{"arn":"arn:aws:codewhisperer:us-east-1:1:profile/test"}]}`)}, nil
+	}
+	cred, err := credentialWithProfileArn(kiroCredential{AccessToken: "token"}, "callback", "us-east-1")
+	if err != nil || cred.ProfileArn != "arn:aws:codewhisperer:us-east-1:1:profile/test" {
+		t.Fatalf("discovery result = %+v, %v", cred, err)
+	}
+}
+
 func TestFetchKiroEventsRetriesEmptyResponse(t *testing.T) {
 	payload, err := json.Marshal(claudeRequest{
 		Model:    "claude-sonnet-4-5",
@@ -19,7 +34,7 @@ func TestFetchKiroEventsRetriesEmptyResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal Claude request: %v", err)
 	}
-	storage, err := json.Marshal(kiroCredential{AccessToken: "test-access-token"})
+	storage, err := json.Marshal(kiroCredential{AccessToken: "test-access-token", ProfileArn: "arn:test"})
 	if err != nil {
 		t.Fatalf("marshal credential: %v", err)
 	}
@@ -72,7 +87,7 @@ func TestFetchKiroEventsStopsAfterEmptyResponseLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal Claude request: %v", err)
 	}
-	storage, err := json.Marshal(kiroCredential{AccessToken: "test-access-token"})
+	storage, err := json.Marshal(kiroCredential{AccessToken: "test-access-token", ProfileArn: "arn:test"})
 	if err != nil {
 		t.Fatalf("marshal credential: %v", err)
 	}
@@ -116,7 +131,7 @@ func TestExecuteKiroStreamForwardsSplitFrames(t *testing.T) {
 	if errMarshal != nil {
 		t.Fatalf("marshal Claude request: %v", errMarshal)
 	}
-	storage, errMarshal := json.Marshal(kiroCredential{AccessToken: "test-access-token"})
+	storage, errMarshal := json.Marshal(kiroCredential{AccessToken: "test-access-token", ProfileArn: "arn:test"})
 	if errMarshal != nil {
 		t.Fatalf("marshal credential: %v", errMarshal)
 	}

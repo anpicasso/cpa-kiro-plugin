@@ -87,14 +87,14 @@ func TestBuildToolResultDedupAndProfileArn(t *testing.T) {
 			{"type":"tool_result","tool_use_id":"t1","content":"dup"},
 			{"type":"text","text":"done"}
 		]}]
-	}`, kiroCredential{AuthMethod: "social", ProfileArn: "arn:aws:codewhisperer:profile/X"})
+	}`, kiroCredential{AuthMethod: "IdC", ProfileArn: "arn:aws:codewhisperer:profile/X"})
 
 	ctx := req.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext
 	if ctx == nil || len(ctx.ToolResults) != 1 {
 		t.Fatalf("expected deduped single tool result, got %+v", ctx)
 	}
 	if req.ProfileArn != "arn:aws:codewhisperer:profile/X" {
-		t.Fatalf("social profileArn not attached: %q", req.ProfileArn)
+		t.Fatalf("profileArn not attached for IdC auth: %q", req.ProfileArn)
 	}
 }
 

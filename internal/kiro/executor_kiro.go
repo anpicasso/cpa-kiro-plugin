@@ -71,6 +71,10 @@ func fetchKiroEvents(request []byte) (*kiroExecResult, []byte, error) {
 	if errRegion != nil {
 		return nil, wire.ErrorStatus("invalid_credential", "invalid kiro credential region: "+errRegion.Error(), http.StatusBadRequest), nil
 	}
+	cred, errProfile := credentialWithProfileArn(cred, req.HostCallbackID, region)
+	if errProfile != nil {
+		return nil, wire.ErrorStatus("invalid_credential", errProfile.Error(), http.StatusBadRequest), nil
+	}
 	url, errURL := safeEndpoint(generateURLTemplate, region, "")
 	if errURL != nil {
 		return nil, wire.ErrorStatus("invalid_credential", "invalid kiro endpoint: "+errURL.Error(), http.StatusBadRequest), nil
@@ -174,6 +178,10 @@ func executeKiroStream(request []byte) ([]byte, error) {
 	if errRegion != nil {
 		return wire.ErrorStatus("invalid_credential", "invalid kiro credential region: "+errRegion.Error(), http.StatusBadRequest), nil
 	}
+	cred, errProfile := credentialWithProfileArn(cred, req.HostCallbackID, region)
+	if errProfile != nil {
+		return wire.ErrorStatus("invalid_credential", errProfile.Error(), http.StatusBadRequest), nil
+	}
 	url, errURL := safeEndpoint(generateURLTemplate, region, "")
 	if errURL != nil {
 		return wire.ErrorStatus("invalid_credential", "invalid kiro endpoint: "+errURL.Error(), http.StatusBadRequest), nil
@@ -268,4 +276,16 @@ func kiroRequestHeaders(cred kiroCredential) map[string][]string {
 		"x-amz-user-agent":            {fmt.Sprintf("aws-sdk-js/1.0.34 KiroIDE-%s-%s", kiroVersion, mid)},
 		"user-agent":                  {fmt.Sprintf("aws-sdk-js/1.0.34 ua/2.1 os/other lang/js md/nodejs#20.11.0 api/codewhispererstreaming#1.0.34 m/E KiroIDE-%s-%s", kiroVersion, mid)},
 	}
+}
+
+// credentialWithProfileArn fills the profile missing from device-code auth
+// files. Kiro Builder's runtime endpoint requires it for every auth method.
+func credentialWithProfileArn(cred kiroCredential, callbackID, region string) (kiroCredential, error) {
+	if strings.TrimSpace(cred.ProfileArn) == "" {
+		cred.ProfileArn = discoverProfileArn(cred, callbackID, region)
+	}
+	if strings.TrimSpace(cred.ProfileArn) == "" {
+		return cred, fmt.Errorf("kiro credential has no discoverable profileArn")
+	}
+	return cred, nil
 }
