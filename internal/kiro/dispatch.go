@@ -75,13 +75,13 @@ func kiroRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             providerKiro,
-			Version:          "0.2.1",
+			Version:          "0.2.2",
 			Author:           "anpicasso",
 			GitHubRepository: "https://github.com/anpicasso/cpa-kiro-plugin",
 			Logo:             kiroLogo,
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "AWS IAM Identity Center start URL for your organization."},
-				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "AWS Region hosting your IAM Identity Center instance."},
+				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "Per-login IAM Identity Center start URL; plugin configuration is the default."},
+				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "Per-login IAM Identity Center region; plugin configuration is the default."},
 			},
 		},
 		Capabilities: registrationCapability{

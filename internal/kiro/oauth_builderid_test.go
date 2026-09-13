@@ -144,6 +144,44 @@ func TestStartKiroLoginOrgIdC(t *testing.T) {
 	}
 }
 
+func TestStartKiroLoginRequestOverridesPluginConfig(t *testing.T) {
+	resetKiroConfig(t)
+	config.Apply(mustConfigRequest(t, "idc_start_url: https://default.awsapps.com/start\nidc_region: eu-west-1\n"))
+
+	oldHTTPDo := kiroHTTPDo
+	t.Cleanup(func() { kiroHTTPDo = oldHTTPDo })
+	var deviceAuthBody, registerURL string
+	kiroHTTPDo = func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		switch {
+		case strings.HasSuffix(req.URL, "/client/register"):
+			registerURL = req.URL
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"clientId":"cid","clientSecret":"secret"}`)}, nil
+		case strings.HasSuffix(req.URL, "/device_authorization"):
+			deviceAuthBody = string(req.Body)
+			return &hostapi.HTTPResponse{StatusCode: 200, Body: []byte(`{"deviceCode":"dev-9","verificationUriComplete":"https://override.awsapps.com/start/#/device","expiresIn":600,"interval":5}`)}, nil
+		default:
+			t.Fatalf("unexpected URL: %s", req.URL)
+			return nil, nil
+		}
+	}
+
+	raw, err := startKiroLogin([]byte(`{"Provider":"kiro","Metadata":{"idc_start_url":"https://override.awsapps.com/start","idc_region":"us-west-2"},"host_callback_id":"cb-1"}`))
+	if err != nil {
+		t.Fatalf("startKiroLogin: %v", err)
+	}
+	resp := decodeLoginStart(t, raw)
+
+	if metaString(resp.Metadata, "region") != "us-west-2" || !strings.Contains(registerURL, "oidc.us-west-2.amazonaws.com") {
+		t.Fatalf("request region override was not used: metadata=%+v url=%q", resp.Metadata, registerURL)
+	}
+	if !strings.Contains(deviceAuthBody, "https://override.awsapps.com/start") {
+		t.Fatalf("request start URL override was not used: body=%s", deviceAuthBody)
+	}
+	if cfg := config.Get(); cfg.IDCStartURL != "https://default.awsapps.com/start" || cfg.IDCRegion != "eu-west-1" {
+		t.Fatalf("request override persisted into plugin config: %+v", cfg)
+	}
+}
+
 func mustConfigRequest(t *testing.T, configYAML string) []byte {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"config_yaml": []byte(configYAML)})

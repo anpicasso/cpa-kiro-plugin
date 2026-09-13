@@ -124,20 +124,19 @@ func startKiroLogin(request []byte) ([]byte, error) {
 		return nil, errUnmarshal
 	}
 
-	// The login method is inferred from config rather than chosen explicitly: a
-	// configured idc_start_url means the user wants organization IAM Identity
-	// Center (IdC) login; an empty one falls back to AWS Builder ID. The host's
-	// login entry carries no user choice, so this is the only signal available.
+	// Request metadata overrides plugin defaults for this login only. CPA passes
+	// query parameters to AuthLoginStartRequest.Metadata without persisting them.
+	// An empty idc_start_url deliberately selects AWS Builder ID for this flow.
 	cfg := config.Get()
-	startURL := ""
+	startURL := loginConfigValue(req.Metadata, "idc_start_url", cfg.IDCStartURL)
+	idcRegion := loginConfigValue(req.Metadata, "idc_region", cfg.IDCRegion)
 	authMethod := builderIDAuthMethod
 	region := defaultKiroRegion
-	if strings.TrimSpace(cfg.IDCStartURL) != "" {
-		startURL = cfg.IDCStartURL
+	if startURL != "" {
 		authMethod = idcAuthMethod
-		// 配置里的 idc_region 会进入端点 authority,必须校验;不合法则拒绝登录,
-		// 而不是静默回退到默认区域(那会让用户以为配置生效了)。
-		validRegion, errRegion := validateRegion(firstNonEmptyStr(cfg.IDCRegion, defaultKiroRegion))
+		// idc_region enters the endpoint authority, so reject invalid values instead
+		// of silently falling back to a default the user did not choose.
+		validRegion, errRegion := validateRegion(firstNonEmptyStr(idcRegion, defaultKiroRegion))
 		if errRegion != nil {
 			return wire.ErrorStatus("login_invalid_region", "invalid idc_region: "+errRegion.Error(), http.StatusBadRequest), nil
 		}
@@ -182,6 +181,13 @@ func startKiroLogin(request []byte) ([]byte, error) {
 		ExpiresAt: time.Now().Add(time.Duration(expiresIn) * time.Second),
 		Metadata:  metadata,
 	})
+}
+
+func loginConfigValue(metadata map[string]any, key, fallback string) string {
+	if value, ok := metadata[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // pollKiroLogin performs a single token poll for a Builder ID device-code login.
