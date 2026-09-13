@@ -64,6 +64,16 @@ func HandleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodManagementHandle:
 		return handleManagement(request)
 
+	// ---- quota ----
+	case "quota.identifier":
+		return wire.OK(identifierResponse{Identifier: providerKiro})
+	case "quota.describe":
+		return wire.OK(quotaDescribeResponse{SupportedProviders: []string{providerKiro}, DisplayName: "Kiro", SupportsReset: false})
+	case "quota.fetch":
+		return fetchKiroQuota(request)
+	case "quota.reset":
+		return wire.OK(quotaResetResponse{Success: false, Message: "Kiro usage is read-only"})
+
 	default:
 		return wire.Error("unknown_method", "unknown method: "+method), nil
 	}
@@ -92,6 +102,7 @@ func kiroRegistration() registration {
 			ExecutorInputFormats:  []string{"claude"},
 			ExecutorOutputFormats: []string{"claude"},
 			ManagementAPI:         true,
+			QuotaProvider:         true,
 		},
 	}
 }

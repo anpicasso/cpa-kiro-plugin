@@ -25,6 +25,7 @@ type registrationCapability struct {
 	ExecutorInputFormats  []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats []string                     `json:"executor_output_formats,omitempty"`
 	ManagementAPI         bool                         `json:"management_api,omitempty"`
+	QuotaProvider         bool                         `json:"quota_provider,omitempty"`
 }
 
 // identifierResponse is the result payload for the *.identifier methods.
