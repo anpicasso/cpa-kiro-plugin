@@ -1,6 +1,8 @@
 package kiro
 
 import (
+	_ "embed"
+	"encoding/base64"
 	"net/http"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
@@ -9,6 +11,11 @@ import (
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/config"
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
+
+//go:embed kiro-logo.svg
+var kiroLogoSVG []byte
+
+var kiroLogo = "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(kiroLogoSVG)
 
 // HandleMethod dispatches a host RPC call to the matching handler and returns a
 // JSON envelope. request is the raw JSON body of the method-specific request.
@@ -68,12 +75,13 @@ func kiroRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             providerKiro,
-			Version:          "0.2.0",
+			Version:          "0.2.1",
 			Author:           "anpicasso",
 			GitHubRepository: "https://github.com/anpicasso/cpa-kiro-plugin",
+			Logo:             kiroLogo,
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "Organization IAM Identity Center portal start URL."},
-				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "AWS Region that hosts your Identity Center instance."},
+				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "AWS IAM Identity Center start URL for your organization."},
+				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "AWS Region hosting your IAM Identity Center instance."},
 			},
 		},
 		Capabilities: registrationCapability{
