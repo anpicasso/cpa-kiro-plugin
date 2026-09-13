@@ -68,9 +68,9 @@ func kiroRegistration() registration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             providerKiro,
-			Version:          "0.1.1",
-			Author:           "xiaokui-dev",
-			GitHubRepository: "https://github.com/xiaokui-dev/cliproxyapi-kiro-plugin",
+			Version:          "0.2.0",
+			Author:           "anpicasso",
+			GitHubRepository: "https://github.com/anpicasso/cpa-kiro-plugin",
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "idc_start_url", Type: pluginapi.ConfigFieldTypeString, Description: "Organization IAM Identity Center portal start URL."},
 				{Name: "idc_region", Type: pluginapi.ConfigFieldTypeString, Description: "AWS Region that hosts your Identity Center instance."},
