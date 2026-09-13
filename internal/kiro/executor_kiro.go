@@ -12,7 +12,10 @@ import (
 	"github.com/xiaokui-dev/cliproxyapi-kiro-plugin/internal/wire"
 )
 
-const generateURLTemplate = "https://q.%s.amazonaws.com/generateAssistantResponse"
+// Kiro Builder routes inference through runtime.<region>.kiro.dev. The older
+// q.<region>.amazonaws.com endpoint can answer 200 while closing the stream
+// without a payload, which makes otherwise-valid credentials look unusable.
+const generateURLTemplate = "https://runtime.%s.kiro.dev/generateAssistantResponse"
 
 // maxEmptyResponseAttempts bounds retries when Kiro returns HTTP 200 with no
 // content and no tool calls. Upstream occasionally goes silent for a given
@@ -255,7 +258,8 @@ func kiroRequestHeaders(cred kiroCredential) map[string][]string {
 	mid := machineID(cred)
 	return map[string][]string{
 		"Authorization":               {"Bearer " + cred.AccessToken},
-		"Content-Type":                {"application/json"},
+		"Content-Type":                {"application/x-amz-json-1.0"},
+		"x-amz-target":                {"AmazonCodeWhispererStreamingService.GenerateAssistantResponse"},
 		"Accept":                      {"application/json"},
 		"amz-sdk-invocation-id":       {uuidV4()},
 		"amz-sdk-request":             {"attempt=1; max=3"},

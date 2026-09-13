@@ -78,7 +78,7 @@ var allTemplates = []struct {
 }{
 	{"social 刷新", socialRefreshURLTemplate, "", "prod.us-east-1.auth.desktop.kiro.dev"},
 	{"IDC 刷新", idcRefreshURLTemplate, "", "oidc.us-east-1.amazonaws.com"},
-	{"生成", generateURLTemplate, "", "q.us-east-1.amazonaws.com"},
+	{"生成", generateURLTemplate, "", "runtime.us-east-1.kiro.dev"},
 	{"用量", usageURLTemplate, "", "q.us-east-1.amazonaws.com"},
 	{"模型发现", listAvailableModelsURLTemplate, "", "management.us-east-1.kiro.dev"},
 	{"OIDC 注册", ssoOIDCEndpointTemplate, "/client/register", "oidc.us-east-1.amazonaws.com"},
