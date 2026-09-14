@@ -26,6 +26,16 @@ func TestCredentialWithProfileArnDiscovers(t *testing.T) {
 	}
 }
 
+func TestKiroRequestHeadersLeaveAcceptNegotiationToKiro(t *testing.T) {
+	headers := kiroRequestHeaders(kiroCredential{AccessToken: "test-access-token"})
+	if _, ok := headers["Accept"]; ok {
+		t.Fatal("Kiro request must not force a JSON response; it streams AWS event frames by default")
+	}
+	if got := headers["x-amz-target"]; len(got) != 1 || got[0] != "AmazonCodeWhispererStreamingService.GenerateAssistantResponse" {
+		t.Fatalf("unexpected x-amz-target: %#v", got)
+	}
+}
+
 func TestFetchKiroEventsRetriesEmptyResponse(t *testing.T) {
 	payload, err := json.Marshal(claudeRequest{
 		Model:    "claude-sonnet-4-5",

@@ -41,6 +41,82 @@ func parseEventStreamFrames(buffer []byte) []cwEvent {
 	return events
 }
 
+func parseKiroEventBody(buffer []byte) []cwEvent {
+	if events := parseEventStreamFrames(buffer); len(events) > 0 {
+		return events
+	}
+	var scanner kiroJSONEventScanner
+	return scanner.feed(buffer)
+}
+
+// kiroJSONEventScanner extracts the JSON event bodies from the Kiro runtime
+// response without assuming its outer AWS event-stream framing. The runtime
+// has changed framing in the wild; its event JSON remains the stable contract.
+type kiroJSONEventScanner struct {
+	pending []byte
+}
+
+func (s *kiroJSONEventScanner) feed(chunk []byte) []cwEvent {
+	s.pending = append(s.pending, chunk...)
+	events := make([]cwEvent, 0, 4)
+	for {
+		start := -1
+		for i, b := range s.pending {
+			if b == '{' {
+				start = i
+				break
+			}
+		}
+		if start < 0 {
+			s.pending = nil
+			return events
+		}
+		if start > 0 {
+			s.pending = s.pending[start:]
+		}
+		end, ok := jsonObjectEnd(s.pending)
+		if !ok {
+			return events
+		}
+		var payload framePayload
+		if json.Unmarshal(s.pending[:end], &payload) == nil {
+			if event, ok := classifyFrame("", payload); ok {
+				events = append(events, event...)
+			}
+		}
+		s.pending = s.pending[end:]
+	}
+}
+
+func jsonObjectEnd(buffer []byte) (int, bool) {
+	depth := 0
+	inString, escaped := false, false
+	for i, b := range buffer {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i + 1, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // consumeEventStreamFrames decodes complete frames and retains a trailing partial
 // frame for the next host stream read.
 func consumeEventStreamFrames(buffer []byte) ([]cwEvent, []byte) {

@@ -108,7 +108,7 @@ func fetchKiroEvents(request []byte) (*kiroExecResult, []byte, error) {
 			return nil, wire.ErrorStatus("upstream_status", fmt.Sprintf("kiro generateAssistantResponse HTTP %d: %s", resp.StatusCode, truncate(string(resp.Body), 300)), resp.StatusCode), nil
 		}
 
-		text, calls := aggregateEvents(parseEventStreamFrames(resp.Body), maps)
+		text, calls := aggregateEvents(parseKiroEventBody(resp.Body), maps)
 		lastResult = &kiroExecResult{
 			text:           text,
 			calls:          calls,
@@ -241,7 +241,7 @@ func forwardKiroStream(upstreamID string, writer *claudeStreamWriter) (err error
 		_ = kiroHTTPStreamClose(upstreamID)
 	}()
 
-	var pending []byte
+	var scanner kiroJSONEventScanner
 	for {
 		chunk, errRead := kiroHTTPStreamRead(upstreamID)
 		if errRead != nil {
@@ -250,9 +250,7 @@ func forwardKiroStream(upstreamID string, writer *claudeStreamWriter) (err error
 		if chunk.Error != "" {
 			return fmt.Errorf("kiro upstream stream: %s", chunk.Error)
 		}
-		pending = append(pending, chunk.Payload...)
-		events, rest := consumeEventStreamFrames(pending)
-		pending = rest
+		events := scanner.feed(chunk.Payload)
 		for _, event := range events {
 			if errWrite := writer.write(event); errWrite != nil {
 				return errWrite
@@ -271,7 +269,6 @@ func kiroRequestHeaders(cred kiroCredential) map[string][]string {
 		"Authorization":               {"Bearer " + cred.AccessToken},
 		"Content-Type":                {"application/x-amz-json-1.0"},
 		"x-amz-target":                {"AmazonCodeWhispererStreamingService.GenerateAssistantResponse"},
-		"Accept":                      {"application/json"},
 		"amz-sdk-invocation-id":       {uuidV4()},
 		"amz-sdk-request":             {"attempt=1; max=3"},
 		"x-amzn-codewhisperer-optout": {"true"},

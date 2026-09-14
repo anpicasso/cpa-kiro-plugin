@@ -1,6 +1,7 @@
 package kiro
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 )
@@ -56,6 +57,23 @@ func TestParseEventStreamContent(t *testing.T) {
 	}
 	if got := string(msg.Content[0]); got != `{"text":"Hello, world","type":"text"}` {
 		t.Fatalf("unexpected text block: %s", got)
+	}
+}
+
+func TestKiroJSONEventScannerHandlesSplitFramePayload(t *testing.T) {
+	frame := encodeFrame("assistantResponseEvent", `{"content":"gateway-compatible"}`)
+	start := bytes.Index(frame, []byte(`{"content":"gateway`))
+	if start < 0 {
+		t.Fatal("test frame did not contain payload")
+	}
+	split := start + len(`{"content":"gateway`)
+	var scanner kiroJSONEventScanner
+	if got := scanner.feed(frame[:split]); len(got) != 0 {
+		t.Fatalf("expected no partial event, got %+v", got)
+	}
+	got := scanner.feed(frame[split:])
+	if len(got) != 1 || got[0].Kind != cwEventContent || got[0].Text != "gateway-compatible" {
+		t.Fatalf("unexpected events: %+v", got)
 	}
 }
 
