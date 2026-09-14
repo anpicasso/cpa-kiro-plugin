@@ -68,6 +68,21 @@ func TestFetchKiroQuotaNormalizesUsage(t *testing.T) {
 	if bucket.ResetTime != "2026-10-01T00:00:00Z" {
 		t.Fatalf("reset time = %q", bucket.ResetTime)
 	}
+	if len(got.Summary) != 4 {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+	if got.Summary[0] != (quotaMetric{Key: "kiro-1-used", Label: "Credits used", Value: 1740.28, Unit: "INVOCATIONS"}) {
+		t.Fatalf("used summary = %#v", got.Summary[0])
+	}
+	if got.Summary[1] != (quotaMetric{Key: "kiro-1-limit", Label: "Credits limit", Value: 1000, Unit: "INVOCATIONS"}) {
+		t.Fatalf("limit summary = %#v", got.Summary[1])
+	}
+	if got.Summary[2] != (quotaMetric{Key: "kiro-1-overage", Label: "Credits extra usage", Value: 740.28, Unit: "INVOCATIONS"}) {
+		t.Fatalf("overage summary = %#v", got.Summary[2])
+	}
+	if got.Summary[3] != (quotaMetric{Key: "kiro-1-overage-charges", Label: "Credits extra usage charges", Value: 29.611456, Unit: "USD", Format: "currency", Currency: "USD"}) {
+		t.Fatalf("charges summary = %#v", got.Summary[3])
+	}
 }
 
 func TestKiroQuotaRejectsOtherProvider(t *testing.T) {

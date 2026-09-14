@@ -44,8 +44,19 @@ type quotaGroup struct {
 	Buckets     []quotaBucket `json:"buckets,omitempty"`
 }
 
+// quotaMetric mirrors CPA's optional provider-defined summary metric.
+type quotaMetric struct {
+	Key      string  `json:"key"`
+	Label    string  `json:"label"`
+	Value    float64 `json:"value"`
+	Unit     string  `json:"unit,omitempty"`
+	Format   string  `json:"format,omitempty"`
+	Currency string  `json:"currency,omitempty"`
+}
+
 type quotaFetchResponse struct {
 	Subscription *quotaSubscription `json:"subscription,omitempty"`
+	Summary      []quotaMetric      `json:"summary,omitempty"`
 	Groups       []quotaGroup       `json:"groups,omitempty"`
 }
 
@@ -122,7 +133,7 @@ func normalizeKiroQuota(raw []byte) (quotaFetchResponse, error) {
 	}
 
 	group := quotaGroup{DisplayName: "Kiro credits"}
-	for _, item := range usage.UsageBreakdownList {
+	for index, item := range usage.UsageBreakdownList {
 		used := precise(item.CurrentUsage, item.CurrentUsageWithPrecision)
 		limit := precise(item.UsageLimit, item.UsageLimitWithPrecision)
 		overage := precise(item.CurrentOverages, item.CurrentOveragesWithPrecision)
@@ -142,15 +153,31 @@ func normalizeKiroQuota(raw []byte) (quotaFetchResponse, error) {
 			label = "Credits"
 		}
 		unit := strings.TrimSpace(item.Unit)
+		metricKey := fmt.Sprintf("kiro-%d", index+1)
+		resp.Summary = append(resp.Summary,
+			quotaMetric{Key: metricKey + "-used", Label: label + " used", Value: used, Unit: unit},
+			quotaMetric{Key: metricKey + "-limit", Label: label + " limit", Value: limit, Unit: unit},
+		)
+		if overage > 0 {
+			resp.Summary = append(resp.Summary, quotaMetric{Key: metricKey + "-overage", Label: label + " extra usage", Value: overage, Unit: unit})
+		}
+		currency := strings.ToUpper(strings.TrimSpace(item.Currency))
+		if item.OverageCharges > 0 {
+			metric := quotaMetric{Key: metricKey + "-overage-charges", Label: label + " extra usage charges", Value: item.OverageCharges, Unit: currency}
+			if len(currency) == 3 {
+				metric.Format, metric.Currency = "currency", currency
+			}
+			resp.Summary = append(resp.Summary, metric)
+		}
 		description := fmt.Sprintf("%s: %.2f / %.2f %s", label, used, limit, unit)
 		if overage > 0 {
 			description += fmt.Sprintf(" · %.2f overage", overage)
 		}
 		if item.OverageCharges > 0 {
-			description += fmt.Sprintf(" · %s %.2f charged", strings.TrimSpace(item.Currency), item.OverageCharges)
+			description += fmt.Sprintf(" · %s %.2f charged", currency, item.OverageCharges)
 		}
 		if item.OverageRate > 0 {
-			description += fmt.Sprintf(" · %s %.2f/%s", strings.TrimSpace(item.Currency), item.OverageRate, unit)
+			description += fmt.Sprintf(" · %s %.2f/%s", currency, item.OverageRate, unit)
 		}
 		group.Buckets = append(group.Buckets, quotaBucket{
 			Window:            "credits",
